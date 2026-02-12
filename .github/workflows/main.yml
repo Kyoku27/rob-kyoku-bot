@@ -1,9 +1,9 @@
 name: Amazon Rank Cron
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:   # 手动触发按钮
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: '*/5 * * * *'   # 每5分钟跑一次
 
 jobs:
   run-bot:
@@ -16,15 +16,15 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run bot
+      - name: Run script
         env:
           FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
           FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
           FEISHU_SHEET_TOKEN: ${{ secrets.FEISHU_SHEET_TOKEN }}
           MAX_ROWS: ${{ secrets.MAX_ROWS }}
-        run: python main.py
+        run: python tasks/amazon_rank_job.py
