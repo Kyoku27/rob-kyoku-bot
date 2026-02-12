@@ -1,0 +1,27 @@
+name: Amazon Rank Cron
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install -r requirements.txt
+
+      - name: Run script
+        env:
+          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_SHEET_TOKEN: ${{ secrets.FEISHU_SHEET_TOKEN }}
+          FEISHU_SHEET_NAME: 自動抓取TEST
+        run: python tasks/amazon_rank_job.py
