@@ -2,22 +2,23 @@ import os, re, time, random
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timezone, timedelta
-from urllib.parse import quote
 
 # ✅ 国际版 Lark：open.larksuite.com
-# 如果你以后切回飞书（国内版），再把这个环境变量改成 https://open.feishu.cn
 LARK_HOST = os.getenv("LARK_HOST", "https://open.larksuite.com").rstrip("/")
 
 APP_ID = os.getenv("FEISHU_APP_ID")
 APP_SECRET = os.getenv("FEISHU_APP_SECRET")
 SPREADSHEET_TOKEN = os.getenv("FEISHU_SHEET_TOKEN")  # spreadsheet token（不是整条URL）
-SHEET_NAME = os.getenv("FEISHU_SHEET_NAME", "自動抓取TEST")
+
+# ✅ 如果你设置了 FEISHU_SHEET_NAME，就优先用它；否则自动用当月 "2月/3月..."
+JST = timezone(timedelta(hours=9))
+AUTO_MONTH_SHEET = f"{datetime.now(JST).month}月"
+SHEET_NAME = os.getenv("FEISHU_SHEET_NAME") or AUTO_MONTH_SHEET
 
 HEADER_ROW = 1
 DATA_START_ROW = 2
 ASIN_COL = "B"
 MAX_ROWS = int(os.getenv("MAX_ROWS", "200"))
-JST = timezone(timedelta(hours=9))
 
 def sleep_jitter(a=1.5, b=3.5):
     time.sleep(random.uniform(a, b))
@@ -48,7 +49,6 @@ def batch_get(token: str, ranges: list[str]) -> dict:
     r = requests.get(url, headers=headers, params={"ranges": ranges}, timeout=30)
 
     if r.status_code != 200:
-        # ✅ 打印清楚到底是哪种 NOTEXIST / PERMISSION
         try:
             j = r.json()
         except Exception:
@@ -77,14 +77,58 @@ def batch_update(token: str, updates: list[dict]) -> None:
     if data.get("code") != 0:
         raise RuntimeError(f"[LARK][batch_update] {data}")
 
+def list_sheets(token: str) -> list[dict]:
+    # ✅ 查 spreadsheet 内所有 sheet tab
+    url = f"{LARK_HOST}/open-apis/sheets/v3/spreadsheets/{SPREADSHEET_TOKEN}/sheets/query"
+    headers = {"Authorization": f"Bearer {token}"}
+    r = requests.get(url, headers=headers, timeout=30)
+
+    if r.status_code != 200:
+        try:
+            j = r.json()
+        except Exception:
+            j = r.text
+        raise RuntimeError(f"[LARK][list_sheets] status={r.status_code} body={j}")
+
+    data = r.json()
+    if data.get("code") != 0:
+        raise RuntimeError(f"[LARK][list_sheets] {data}")
+
+    return data.get("data", {}).get("sheets", []) or []
+
+def ensure_sheet_tab_exists(token: str, sheet_name: str) -> None:
+    sheets = list_sheets(token)
+    for s in sheets:
+        if s.get("title") == sheet_name:
+            return  # ✅ 已存在
+
+    # ✅ 不存在就创建
+    url = f"{LARK_HOST}/open-apis/sheets/v2/spreadsheets/{SPREADSHEET_TOKEN}/sheets_batch_update"
+    headers = {"Authorization": f"Bearer {token}"}
+    body = {"requests": [{"addSheet": {"properties": {"title": sheet_name}}}]}
+
+    r = requests.post(url, headers=headers, json=body, timeout=30)
+    if r.status_code != 200:
+        try:
+            j = r.json()
+        except Exception:
+            j = r.text
+        raise RuntimeError(f"[LARK][add_sheet] status={r.status_code} body={j}")
+
+    data = r.json()
+    if data.get("code") != 0:
+        raise RuntimeError(f"[LARK][add_sheet] {data}")
+
+    print(f"[INFO] created sheet tab: {sheet_name}")
+
 def extract_asin(v) -> str | None:
     s = str(v).strip() if v is not None else ""
-    # 支持 https://www.amazon.co.jp/dp/ASIN
     m = re.search(r"/dp/([A-Z0-9]{10})", s)
-    if m: return m.group(1)
-    # 支持裸 ASIN
+    if m:
+        return m.group(1)
     m = re.search(r"\b([A-Z0-9]{10})\b", s)
-    if m: return m.group(1)
+    if m:
+        return m.group(1)
     return None
 
 def ensure_today_col(token: str) -> str:
@@ -96,7 +140,8 @@ def ensure_today_col(token: str) -> str:
     last = 0
     for i, v in enumerate(row):
         sv = str(v).strip() if v is not None else ""
-        if sv: last = i + 1
+        if sv:
+            last = i + 1
         if sv == today:
             return num_to_col(i + 1)
 
@@ -115,8 +160,10 @@ def fetch_rank(asin: str) -> tuple[str | None, str]:
         "Accept-Language": "ja-JP,ja;q=0.9",
     }
     r = requests.get(url, headers=headers, timeout=25)
-    if r.status_code == 403: return None, "HTTP_403"
-    if r.status_code != 200: return None, f"HTTP_{r.status_code}"
+    if r.status_code == 403:
+        return None, "HTTP_403"
+    if r.status_code != 200:
+        return None, f"HTTP_{r.status_code}"
 
     html = r.text
     if "captcha" in html.lower() or "ロボットではありません" in html:
@@ -125,7 +172,6 @@ def fetch_rank(asin: str) -> tuple[str | None, str]:
     soup = BeautifulSoup(html, "lxml")
     text = soup.get_text("\n", strip=True)
 
-    # 这里是一个“尽量泛化”的匹配：xx - 12,345位
     m = re.search(r"([^\n]{2,80})\s*-\s*(\d{1,3}(?:,\d{3})*)位", text)
     if not m:
         return None, "RANK_N/A"
@@ -139,6 +185,10 @@ def main():
     print(f"[INFO] sheet_name={SHEET_NAME}")
 
     token = get_tenant_access_token()
+
+    # ✅ 关键：先确保当月 tab 存在（否则 NOTEXIST）
+    ensure_sheet_tab_exists(token, SHEET_NAME)
+
     col = ensure_today_col(token)
     print(f"[INFO] today={today_header_text()} col={col}")
 
@@ -176,3 +226,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
