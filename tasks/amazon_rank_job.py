@@ -91,15 +91,16 @@ def batch_get(token: str, ranges: list[str]) -> dict:
     return data
 
 
-    def batch_update(token: str, updates: list[dict]) -> None:
+  def batch_update(token: str, updates: list[dict]) -> None:
     url = f"{LARK_HOST}/open-apis/sheets/v2/spreadsheets/{SPREADSHEET_TOKEN}/values_batch_update"
+    headers = _headers(token)
 
     body = {
         "valueInputOption": "RAW",
-        "valueRanges": updates   # ✅ 关键在这里
+        "valueRanges": updates,  # ✅ 注意是 valueRanges
     }
 
-    r = requests.post(url, headers=_headers(token), json=body, timeout=30)
+    r = requests.post(url, headers=headers, json=body, timeout=30)
 
     if r.status_code != 200:
         try:
@@ -111,6 +112,7 @@ def batch_get(token: str, ranges: list[str]) -> dict:
     data = r.json()
     if data.get("code") != 0:
         raise RuntimeError(f"[LARK][batch_update] {data}")
+
 
 def extract_asin(v) -> str | None:
     s = str(v).strip() if v is not None else ""
