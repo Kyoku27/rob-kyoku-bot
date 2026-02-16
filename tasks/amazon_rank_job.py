@@ -90,10 +90,17 @@ def batch_get(token: str, ranges: list[str]) -> dict:
         raise RuntimeError(f"[LARK][batch_get] {data}")
     return data
 
-def batch_update(token: str, updates: list[dict]) -> None:
+
+    def batch_update(token: str, updates: list[dict]) -> None:
     url = f"{LARK_HOST}/open-apis/sheets/v2/spreadsheets/{SPREADSHEET_TOKEN}/values_batch_update"
-    body = {"valueInputOption": "RAW", "data": updates}
+
+    body = {
+        "valueInputOption": "RAW",
+        "valueRanges": updates   # ✅ 关键在这里
+    }
+
     r = requests.post(url, headers=_headers(token), json=body, timeout=30)
+
     if r.status_code != 200:
         try:
             j = r.json()
